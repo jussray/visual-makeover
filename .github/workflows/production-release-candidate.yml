@@ -1,0 +1,100 @@
+name: Production release candidate
+on:
+  push:
+    branches: ['release/visual-makeover-production']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  visual-makeover:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Verify production identity rejects anonymous session
+        shell: bash
+        run: |
+          set -euo pipefail
+          NODE_ENV=production PORT=4318 node src/server.mjs > /tmp/visual-makeover.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; cat /tmp/visual-makeover.log' EXIT
+          ready=0
+          for attempt in {1..40}; do
+            if curl -fsS http://127.0.0.1:4318/api/health >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          curl -fsS http://127.0.0.1:4318/ | grep -Fq 'Give a website a new face'
+          status=$(curl -sS -o /tmp/anonymous-response.json -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{}' http://127.0.0.1:4318/api/auth/session)
+          test "$status" = 401
+          node --input-type=module -e 'import fs from "node:fs";const r=JSON.parse(fs.readFileSync("/tmp/anonymous-response.json","utf8"));if(r.token||!r.error)process.exit(1)'
+      - name: Package source runtime (no credentials or receipt data)
+        run: |
+          mkdir -p release-output
+          tar -czf release-output/visual-makeover-node.tar.gz package.json src public
+          printf '%s\n' "$GITHUB_SHA" > release-output/source-head.txt
+          (cd release-output && sha256sum visual-makeover-node.tar.gz source-head.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visual-makeover-node-${{ github.sha }}
+          path: release-output/
+          if-no-files-found: error
+          retention-days: 7
+  moodmockup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/moodmockup
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3'
+      - run: bun install --frozen-lockfile
+      - run: bun run test
+      - run: bunx --no-install tsc --noEmit
+      - run: bun run build
+      - name: Verify generated production bundle
+        run: |
+          test -s .output/server/index.mjs
+          test -s .output/server/wrangler.json
+          test -d .output/public
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install playwright==1.56.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Test production preview (no paid AI calls)
+        shell: bash
+        run: |
+          bun run preview --host 127.0.0.1 --port 4317 > /tmp/moodmockup-preview.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; cat /tmp/moodmockup-preview.log' EXIT
+          python tests/browser_smoke.py
+      - name: Package Cloudflare-compatible bundle
+        run: |
+          mkdir -p release-output
+          tar -czf release-output/moodmockup-cloudflare.tar.gz .output
+          printf '%s\n' "$GITHUB_SHA" > release-output/source-head.txt
+          (cd release-output && sha256sum moodmockup-cloudflare.tar.gz source-head.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moodmockup-cloudflare-${{ github.sha }}
+          path: apps/moodmockup/release-output/
+          if-no-files-found: error
+          retention-days: 7
