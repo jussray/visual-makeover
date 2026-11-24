@@ -43,7 +43,13 @@ test('dual gate API issues app session, scoped browser grant, and allow-listed O
   const signed = await fetch(`${base}/api/auth/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then(r => r.json());
   assert.ok(signed.token);
   const ledger = await readFile(new URL('../data/receipts.jsonl', import.meta.url), 'utf8');
-  assert.match(ledger, /APP_SESSION_CREATED/);
+  assert.ok(ledger.trim().split('\n').map(JSON.parse).some(row => row.id === signed.receipt.id && row.event === 'APP_SESSION_CREATED'), 'exact session receipt must be persisted in the repo ledger');
+  const homepage = await fetch(base);
+  assert.equal(homepage.status, 200);
+  assert.match(await homepage.text(), /Give a website a new face/);
+  const styles = await fetch(`${base}/styles.css`);
+  assert.equal(styles.status, 200);
+  assert.match(styles.headers.get('content-type'), /text\/css/);
 
   const grantRes = await fetch(`${base}/api/browser/grants`, {
     method: 'POST',

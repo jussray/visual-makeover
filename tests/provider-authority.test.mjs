@@ -8,6 +8,7 @@ const BRIDGE_PORT = 4221;
 const base = `http://127.0.0.1:${PORT}`;
 let child;
 let bridge;
+const bridgeRequests = [];
 
 async function waitForServer() {
   for (let i = 0; i < 40; i++) {
@@ -70,6 +71,7 @@ test('fallback browser provider requires its own explicit provider grant', async
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+    bridgeRequests.push(body);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       origin: 'https://example.com',
@@ -116,6 +118,7 @@ test('fallback browser provider requires its own explicit provider grant', async
   assert.equal(deniedBody.decision.route, 'generic_browser_automation');
   assert.equal(deniedBody.evidence.complete, true);
   assert.equal(deniedBody.receipt.event, 'BROWSER_ROUTE_DECIDED');
+  assert.equal(bridgeRequests.length, 0, 'denied provider must not be called');
 
   const genericGrant = await createGrant(session.token, health.noticeVersion, ['generic_browser_automation']);
   const allowed = await fetch(`${base}/api/browser/inspect`, {
@@ -131,7 +134,11 @@ test('fallback browser provider requires its own explicit provider grant', async
   const result = await allowed.json();
   assert.equal(result.provider, 'generic_browser_automation');
   assert.equal(result.authority.provider, 'generic_browser_automation');
-  assert.equal(result.result.ok, true);
-  assert.equal(result.result.echo.provider, 'generic_browser_automation');
-  assert.equal(result.result.echo.expectedOrigin, 'https://example.com');
+  assert.deepEqual(result.result, { captured: true, tool: 'tab_content' });
+  assert.equal(bridgeRequests.length, 1);
+  assert.equal(bridgeRequests[0].provider, 'generic_browser_automation');
+  assert.equal(bridgeRequests[0].expectedOrigin, 'https://example.com');
+  assert.equal(result.capture.contractId, 'juss/browser-reality@v1');
+  assert.match(result.capture.evidenceFingerprintSha256, /^[a-f0-9]{64}$/);
+  assert.ok(!JSON.stringify(result).includes('echo'), 'raw provider response must not escape');
 });

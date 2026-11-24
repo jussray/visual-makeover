@@ -73,7 +73,7 @@ test('browser recovery preserves provider-ready evidence and never self-authoriz
   assert.equal(body.receipt.event, 'BROWSER_ROUTE_DECIDED');
 
   const ledger = await readFile(new URL('../data/receipts.jsonl', import.meta.url), 'utf8');
-  assert.match(ledger, /BROWSER_ROUTE_DECIDED/);
+  assert.ok(ledger.trim().split('\n').map(JSON.parse).some(row => row.id === body.receipt.id && row.event === 'BROWSER_ROUTE_DECIDED'), 'exact decision receipt must be persisted');
 });
 
 
