@@ -16,7 +16,7 @@ import {
   browserRuntimeEvidenceFromEnv
 } from './browser/evidence.mjs';
 
-const ROOT = normalize(join(fileURLToPath(new URL('..', import.meta.url)), '..'));
+const ROOT = normalize(fileURLToPath(new URL('..', import.meta.url)));
 const PUBLIC = join(ROOT, 'public');
 const PORT = Number(process.env.PORT || 4173);
 const NOTICE_VERSION = '2026-10-07.v2';
