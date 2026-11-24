@@ -105,7 +105,7 @@ font must be one of: ${FONT_FAMILIES.join(", ")}.
 Ground every choice in the user's notes, tags and (if provided) the images. Never mention images you were not given.`;
 
 export const generateBrief = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => BoardInput.parse(d))
+  .validator((d: unknown) => BoardInput.parse(d))
   .handler(async ({ data }): Promise<{ ok: true; brief: Brief; sawImages: boolean } | AiFailure> => {
     const hasImages = data.images.length > 0;
     const lines = data.items.map(
@@ -156,7 +156,7 @@ tone is one of primary|secondary|accent|surface. icon is one of: ${ICONS.join(",
 Allowed kinds: ${BLOCK_KINDS.join(", ")}. Use realistic, specific copy for this app (no lorem ipsum).`;
 
 export const generateScreens = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ScreensInput.parse(d))
+  .validator((d: unknown) => ScreensInput.parse(d))
   .handler(async ({ data }): Promise<{ ok: true; screens: ScreenPlan[] } | AiFailure> => {
     const ctx = `App: ${data.description}\nCore features: ${data.features.join("; ") || "(none given — infer sensible ones)"}\nDesign brief JSON: ${JSON.stringify(data.brief)}`;
     if (data.target) {
@@ -184,7 +184,7 @@ ${SCREEN_SPEC}`;
   });
 
 export const suggestFeatures = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ description: z.string().min(3).max(300) }).parse(d))
+  .validator((d: unknown) => z.object({ description: z.string().min(3).max(300) }).parse(d))
   .handler(async ({ data }): Promise<{ ok: true; features: string[] } | AiFailure> => {
     const r = await runJson(
       `Suggest 3 to 6 core features for a mobile app. Return JSON only: {"features": [string <= 60 chars]}.`,
@@ -210,7 +210,7 @@ Return JSON only: {"summary": string, "findings": [{"screen":"onboarding|home|fe
 Only comment on screens and blocks that exist in the plans. Quote the actual copy or block when relevant. Prioritise the audience's stated needs. 2-5 findings per screen.`;
 
 export const reviewAccessibility = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
+  .validator((d: unknown) =>
     z.object({ brief: BriefSchema, screens: z.array(ScreenSchema).min(1).max(4), audience: AudienceInput, description: z.string().max(300) }).parse(d),
   )
   .handler(async ({ data }) => {
@@ -228,7 +228,7 @@ Return JSON only: {"summary": string,"readingLevel":"very_easy|easy|moderate|har
 "original" MUST be copied exactly from the provided copy. Return an empty findings list if the copy is already clear.`;
 
 export const reviewOnboardingCopy = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ copy: z.string().trim().min(3).max(MAX_COPY_CHARS), audience: AudienceInput, description: z.string().max(300) }).parse(d))
+  .validator((d: unknown) => z.object({ copy: z.string().trim().min(3).max(MAX_COPY_CHARS), audience: AudienceInput, description: z.string().max(300) }).parse(d))
   .handler(async ({ data }) => {
     const text = `App: ${data.description || "(not given)"}\nAudience: ${data.audience.summary}\nNeeds: ${data.audience.needs.join(", ") || "none stated"}\nNotes: ${data.audience.notes || "none"}\n\nOnboarding copy:\n"""\n${data.copy}\n"""\n\nReturn JSON.`;
     const r = await runJson(COPY_SYSTEM, [{ type: "input_text", text }], false);
@@ -243,7 +243,7 @@ export const reviewOnboardingCopy = createServerFn({ method: "POST" })
 const IMAGE_MODEL = "openai/gpt-image-2.5-sunburst" as const;
 
 export const generatePanel = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
+  .validator((d: unknown) =>
     z
       .object({
         brief: BriefSchema,
@@ -256,6 +256,7 @@ export const generatePanel = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data }): Promise<{ ok: true; image: string } | AiFailure> => {
+    if (data.index >= data.total) return { ok: false, kind: "rejected", message: "Invalid storyboard position." };
     const key = await callerKey();
     if (rateLimited(`img:${key}`, 12)) return { ok: false, kind: "rate_limited", message: "Too many pictures in a short time. Please wait a few minutes." };
     const b = data.brief;

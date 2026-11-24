@@ -8,10 +8,15 @@ import { Locked, StepNav, useStepAccess } from "@/components/mm/StudioShell";
 import { Busy, ErrorNote, Section, SkeletonBlock, StaleNote, fieldClass, toAiError } from "@/components/mm/ui";
 import { Button } from "@/components/ui/button";
 import { PhoneScreen } from "@/components/mm/PhoneScreen";
-import { generateScreens, reviewAccessibility, reviewOnboardingCopy } from "@/lib/mm/ai.functions";
+import { generatePanel, generateScreens, reviewAccessibility, reviewOnboardingCopy } from "@/lib/mm/ai.functions";
 import { downloadBlob, withTimeout } from "@/lib/mm/client";
 import { briefToMarkdown } from "@/lib/mm/schema";
 import { automaticChecks, copyFromPlan } from "@/lib/mm/review";
+import { imagePayload, storyboardKey, storyboardPng } from "@/lib/mm/storyboard";
+import { fontStack } from "@/lib/mm/fonts";
+import { buildDesignReceipt } from "@/lib/mm/portfolio";
+
+type PanelEntry = { status: "loading" } | { status: "ready"; image: string } | { status: "error"; message: string };
 
 export const Route = createFileRoute("/mockups")({
   head: () => ({
@@ -35,11 +40,37 @@ function MockupsPage() {
   const access = useStepAccess();
   const refs = useRef<Partial<Record<ScreenKind, HTMLDivElement | null>>>({});
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [drawing,setDrawing] = useState(false);
+  const [exporting,setExporting] = useState(false);
+  const drawLock=useRef(false), exportLock=useRef(false);
+  const [panelState,setPanelState]=useState<{key:string; entries:Partial<Record<ScreenKind,PanelEntry>>}|null>(null);
   if (!access[4] || !state.brief) return <Locked>Finish your brief and describe your app first.</Locked>;
   const brief = state.brief.value;
   const base = { brief, description: state.app.description.trim(), features: state.app.features };
 
+  const plans=state.screens.map(s=>s.plan);
+  const journeyKey=storyboardKey(brief,base.description,state.audience,plans);
+  const panels=(!derived.anyScreenStale&&panelState?.key===journeyKey)?panelState.entries:{};
+  const canIllustrate=!derived.anyScreenStale&&!state.screensLoading&&!Object.values(state.screenBusy).some(Boolean)&&!exporting;
+  async function illustrate(only?:ScreenKind) {
+    if(!canIllustrate||drawLock.current||exportLock.current||!plans.length)return;
+    drawLock.current=true;setDrawing(true);
+    const save=(kind:ScreenKind,entry:PanelEntry)=>setPanelState(prev=>({key:journeyKey,entries:{...(prev?.key===journeyKey?prev.entries:{}),[kind]:entry}}));
+    try {
+      for(const [index,plan] of plans.entries()){
+        if(only&&only!==plan.kind)continue;
+        if(!only&&panels[plan.kind]?.status==="ready")continue;
+        save(plan.kind,{status:"loading"});
+        try {
+          const r=await withTimeout(generatePanel({data:{brief,description:base.description,audience:state.audience.summary.trim(),screen:{kind:plan.kind,title:plan.title,caption:plan.caption},index,total:plans.length}}),165000);
+          if(r.ok){imagePayload(r.image,"jpeg");save(plan.kind,{status:"ready",image:r.image});}
+          else save(plan.kind,{status:"error",message:r.message});
+        }catch(e){save(plan.kind,{status:"error",message:toAiError(e).message});}
+      }
+    }finally{drawLock.current=false;setDrawing(false);}
+  }
   async function all() {
+    if(drawLock.current||exportLock.current)return;
     dispatch({ type: "screensStart" });
     try {
       const r = await withTimeout(generateScreens({ data: base }));
@@ -48,6 +79,7 @@ function MockupsPage() {
     } catch (e) { dispatch({ type: "screensFail", error: toAiError(e) }); }
   }
   async function one(rec: ScreenRecord, style?: "minimal" | "bold" | "playful", tweak?: string) {
+    if(drawLock.current||exportLock.current)return;
     const kind = rec.plan.kind;
     dispatch({ type: "screenStart", kind });
     try {
@@ -58,12 +90,13 @@ function MockupsPage() {
   }
   async function audit() {
     dispatch({ type: "a11yStart" });
-    const plans = state.screens.map((s) => s.plan);
+    const local=automaticChecks(brief,plans,state.audience);
+    const fallback=()=>dispatch({type:"a11yDone",summary:"Local design checks only; AI review unavailable. No WCAG certification.",findings:local,basedOn:derived.a11yKey});
     try {
       const r = await withTimeout(reviewAccessibility({ data: { brief, screens: plans, audience: state.audience, description: base.description } }));
-      if (r.ok) dispatch({ type: "a11yDone", summary: r.summary, findings: [...automaticChecks(brief, plans, state.audience), ...r.findings.map((f) => ({ ...f, source: "ai" as const }))], basedOn: derived.a11yKey });
-      else dispatch({ type: "a11yFail", error: { kind: r.kind, message: r.message } });
-    } catch (e) { dispatch({ type: "a11yFail", error: toAiError(e) }); }
+      if (r.ok) dispatch({ type: "a11yDone", summary: r.summary, findings: [...local, ...r.findings.map((f) => ({ ...f, source: "ai" as const }))], basedOn: derived.a11yKey });
+      else {fallback();dispatch({ type: "a11yFail", error: { kind: r.kind, message: r.message } });}
+    } catch (e) {fallback();dispatch({ type: "a11yFail", error: toAiError(e) }); }
   }
   async function copyReview() {
     dispatch({ type: "copyStart" });
@@ -74,21 +107,35 @@ function MockupsPage() {
     } catch (e) { dispatch({ type: "copyFail", error: toAiError(e) }); }
   }
   async function exportPngs() {
-    setExportMsg("Preparing images…");
-    await document.fonts.ready;
-    const zip = new JSZip();
-    const failed: string[] = [];
-    for (const s of state.screens) {
-      const el = refs.current[s.plan.kind];
-      try {
-        if (!el) throw new Error("missing");
-        const url = await toPng(el, { pixelRatio: 2, cacheBust: true });
-        zip.file(`${s.plan.kind}.png`, url.split(",")[1]!, { base64: true });
-      } catch { failed.push(s.plan.title); }
-    }
-    zip.file("design-brief.md", briefToMarkdown(brief, { sawImages: state.brief!.sawImages, stale: derived.briefStale }));
-    downloadBlob(await zip.generateAsync({ type: "blob" }), "mockups.zip");
-    setExportMsg(failed.length ? `Downloaded. These screens couldn't be captured: ${failed.join(", ")}. Try again.` : "Downloaded mockups.zip");
+    if(exportLock.current||drawLock.current)return;
+    exportLock.current=true;setExporting(true);setExportMsg("Preparing images…");
+    try{
+      await document.fonts.ready;
+      const zip=new JSZip(), failed:string[]=[];
+      let count=0;
+      for(const s of state.screens){
+        try{
+          const el=refs.current[s.plan.kind];if(!el)throw Error("Missing screen");
+          zip.file(s.plan.kind+".png",imagePayload(await toPng(el,{pixelRatio:2,cacheBust:true}),"png"),{base64:true});count++;
+        }catch{failed.push(s.plan.title+" mockup");}
+        const panel=panels[s.plan.kind];
+        if(panel?.status==="ready"){
+          try{zip.file("storyboards/"+s.plan.kind+".png",await storyboardPng(panel.image),{base64:true});count++;}
+          catch{failed.push(s.plan.title+" storyboard");}
+        }else if(panel?.status==="error")failed.push(s.plan.title+" storyboard");
+      }
+      if(!count){setExportMsg("No images captured. Retry or download the brief separately.");return;}
+      zip.file("design-brief.md",briefToMarkdown(brief,{sawImages:state.brief!.sawImages,stale:derived.briefStale}));
+      downloadBlob(await zip.generateAsync({type:"blob"}),"mockups.zip");
+      setExportMsg("Downloaded "+count+" images."+ (failed.length?" Unavailable: "+failed.join(", "):""));
+    }catch{setExportMsg("Export failed. Your designs are unchanged.");}
+    finally{exportLock.current=false;setExporting(false);}
+  }
+  async function exportReceipt(){
+    try {
+      const receipt=await buildDesignReceipt({brief,plans,audience:state.audience,description:base.description,stale:derived.anyScreenStale,reviewStale:derived.a11yStale,localFindings:automaticChecks(brief,plans,state.audience).length,illustrated:plans.filter(p=>panels[p.kind]?.status==="ready").length});
+      downloadBlob(new Blob([JSON.stringify(receipt,null,2)],{type:"application/json"}),"design-receipt.json");
+    }catch{setExportMsg("Could not create receipt. No information was transmitted.");}
   }
 
   const onboarding = state.screens.find((s) => s.plan.kind === "onboarding");
@@ -102,8 +149,8 @@ function MockupsPage() {
           <h1 className="mt-1 text-5xl leading-[1.05] sm:text-6xl">Your mockups</h1>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button className="rounded-full" disabled={state.screensLoading} onClick={() => void all()}>{state.screens.length ? <RefreshCw aria-hidden /> : <Sparkles aria-hidden />} {state.screens.length ? "Regenerate all" : "Design my screens"}</Button>
-          {state.screens.length > 0 && <Button variant="outline" className="rounded-full" onClick={() => void exportPngs()}><Download aria-hidden /> Download PNGs</Button>}
+          <Button className="rounded-full" disabled={state.screensLoading || drawing || exporting} onClick={() => void all()}>{state.screens.length ? <RefreshCw aria-hidden /> : <Sparkles aria-hidden />} {state.screens.length ? "Regenerate all" : "Design my screens"}</Button>
+          {state.screens.length > 0 && <Button variant="outline" className="rounded-full" disabled={drawing||exporting||state.screensLoading||Object.values(state.screenBusy).some(Boolean)} onClick={() => void exportPngs()}><Download aria-hidden /> Download PNGs</Button>}
           <Button variant="outline" className="rounded-full" onClick={() => downloadBlob(new Blob([briefToMarkdown(brief, { sawImages: state.brief!.sawImages, stale: derived.briefStale })], { type: "text/markdown" }), "design-brief.md")}><FileText aria-hidden /> Brief .md</Button>
         </div>
       </header>
@@ -117,13 +164,31 @@ function MockupsPage() {
       )}
 
       <ul className="grid justify-items-center gap-8 sm:grid-cols-2 xl:grid-cols-4">
-        {state.screens.map((s) => <ScreenCard key={s.plan.kind} rec={s} stale={derived.screenStale(s)} busy={!!state.screenBusy[s.plan.kind]} error={state.screenErrors[s.plan.kind]} onRun={(st, tw) => void one(s, st, tw)} refSet={(el) => { refs.current[s.plan.kind] = el; }} />)}
+        {state.screens.map((s) => <ScreenCard key={s.plan.kind} rec={s} stale={derived.screenStale(s)} busy={!!state.screenBusy[s.plan.kind] || drawing || exporting} error={state.screenErrors[s.plan.kind]} onRun={(st, tw) => void one(s, st, tw)} refSet={(el) => { refs.current[s.plan.kind] = el; }} />)}
       </ul>
 
+      {plans.length>0&&<Section title="Illustrated storyboard" id="storyboard-h" aside={<Button size="sm" disabled={!canIllustrate||drawing} onClick={()=>void illustrate()}>Illustrate missing scenes</Button>}>
+        <p className="text-sm text-muted-foreground">Optional AI image requests, one per scene. Artwork illustrates the journey; it is not a functional screen. Refresh stale screens before drawing.</p>
+        <ol className="mt-3 grid gap-4 sm:grid-cols-2">{plans.map((plan,index)=>{
+          const entry=panels[plan.kind];
+          return <li key={plan.kind} className="min-w-0 rounded-2xl bg-glass-strong p-3"><figure>
+            {entry?.status==="ready"&&<img src={entry.image} className="w-full rounded-xl object-contain" alt={"Illustrated journey scene "+(index+1)+": "+plan.title}/>}
+            <figcaption><p className="text-lg" style={{fontFamily:fontStack(brief.typography.heading)}}>{index+1}. {plan.title}</p><p className="text-sm" style={{fontFamily:fontStack(brief.typography.body)}}>{plan.caption}</p></figcaption></figure>
+            {entry?.status==="loading"&&<Busy label="Illustrating scene…"/>}
+            {entry?.status==="error"&&<p role="alert" className="text-sm text-destructive">{entry.message}</p>}
+            <Button size="sm" variant="outline" className="mt-2" disabled={drawing||!canIllustrate} onClick={()=>void illustrate(plan.kind)}>{entry?.status==="ready"?"Regenerate":entry?.status==="error"?"Retry":"Illustrate"} scene</Button>
+          </li>;
+        })}</ol>
+      </Section>}
+      {plans.length>0&&<Section title="Portfolio proof & continuity" id="portfolio-h" aside={<Button size="sm" variant="outline" onClick={()=>void exportReceipt()}>Export proof receipt</Button>}>
+        <p className="text-sm">Local SOL-style continuity checks, Chief planning requirements and FCR governance handoff. Draft only. No peer has been called or granted execution authority.</p>
+        <p className="text-sm text-muted-foreground">{derived.anyScreenStale?"Design inputs changed; regenerate screens.":"Screen inputs current."} {derived.a11yStale?"Accessibility review outdated.":state.a11y?"Review present.":"Review not run."}</p>
+      </Section>}
       {state.screens.length > 0 && (
         <div className="grid gap-6 lg:grid-cols-2">
           <Section title="Accessibility review" id="a11y-h" aside={<Button size="sm" className="rounded-full" disabled={!audienceReady || state.a11yLoading} onClick={() => void audit()}><Accessibility aria-hidden /> {state.a11y ? "Review again" : "Review screens"}</Button>}>
             {!audienceReady && <p className="text-sm text-muted-foreground">Describe your audience in step 3 to get recommendations tailored to them.</p>}
+            <p className="text-xs text-muted-foreground">Design-plan review only. Actual tap targets, assistive technology and WCAG compliance require runtime testing.</p>
             {state.a11yLoading && <Busy label="Reviewing screens…" />}
             {state.a11yError && <ErrorNote error={state.a11yError} onRetry={() => void audit()} />}
             {state.a11y && (

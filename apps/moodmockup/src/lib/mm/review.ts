@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Brief, ScreenPlan } from "./schema";
 import { hashString } from "./fingerprint";
+import { mix, onColor, paletteMap } from "./client";
 
 /* ---------- Audience & accessibility profile (Step 3) ---------- */
 
@@ -98,41 +99,44 @@ export function contrastRatio(a: string, b: string) {
   return (x + 0.05) / (y + 0.05);
 }
 
-/** Deterministic checks that never need AI: brief text/background contrast against the audience's needs. */
+/** Design-plan checks: not a measured interaction audit or WCAG certification. */
 export function automaticChecks(brief: Brief, plans: ScreenPlan[], audience: Audience): A11yFinding[] {
-  const get = (r: string) => brief.palette.find((p) => p.role === r)?.hex;
-  const text = get("text"), bg = get("background");
-  const out: A11yFinding[] = [];
-  const target = audience.needs.includes("high_contrast") || audience.needs.includes("large_text") ? 7 : 4.5;
-  const first = plans[0]?.kind;
-  if (text && bg && first) {
-    const r = contrastRatio(text, bg);
-    if (r < target)
-      out.push({
-        source: "check",
-        screen: first,
-        category: "contrast",
-        severity: r < 4.5 ? "critical" : "warning",
-        issue: `Body text on the background has a contrast of ${r.toFixed(1)}:1; your audience needs at least ${target}:1.`,
-        recommendation: "Darken the text color or lighten the background in the brief, then regenerate the screens.",
-        need: target === 7 ? "high_contrast" : null,
-      });
-  }
-  if (audience.needs.includes("large_touch_targets")) {
-    for (const p of plans) {
-      const chips = p.blocks.findIndex((b) => b.kind === "chips" && b.items.length > 4);
-      if (chips >= 0)
-        out.push({
-          source: "check",
-          screen: p.kind,
-          blockIndex: chips,
-          category: "touch_targets",
-          severity: "warning",
-          issue: "A row of more than four small chips is hard to tap accurately.",
-          recommendation: "Use fewer, larger options (at least 44×44 px each) or a list.",
-          need: "large_touch_targets",
-        });
-    }
+  const p = paletteMap(brief), out: A11yFinding[] = [];
+  const enhanced = audience.needs.includes("high_contrast");
+  const motor = audience.needs.includes("large_touch_targets");
+  const plain = audience.needs.includes("plain_language");
+  for (const plan of plans) {
+    const add = (category: A11yFinding["category"], severity: A11yFinding["severity"], issue: string, recommendation: string, blockIndex: number | null = null, need: A11yFinding["need"] = null) =>
+      out.push({ source: "check", screen: plan.kind, blockIndex, category, severity, issue, recommendation, need });
+    const check = (label: string, fg: string, bg: string, i: number | null = null) => {
+      const ratio = contrastRatio(fg,bg);
+      if (ratio < 4.5) add("contrast","critical",label+": "+ratio.toFixed(2)+":1, below the 4.5:1 normal-text target.","Adjust colors and recheck the actual rendering.",i);
+      else if (enhanced && ratio < 7) add("contrast","warning",label+": "+ratio.toFixed(2)+":1, below the audience's enhanced 7:1 target.","Increase contrast where feasible.",i,"high_contrast");
+    };
+    check("Base text/background",p.text,p.background);
+    if (plain && plan.blocks.length > 6) add("cognitive_load","warning","Design heuristic: more than six blocks may be difficult to scan.","Group related content and prioritize the main task.",null,"plain_language");
+    let primary = 0;
+    plan.blocks.forEach((b,i)=>{
+      const small = mix(p.text,p.background,0.4);
+      if(b.kind==="header" && b.subtitle) check("Header subtitle",small,p.background,i);
+      if(b.kind==="hero"){
+        const fill=p[b.tone], fg=onColor(fill,p.text);
+        if(b.eyebrow)check("Hero eyebrow",mix(fill,fg,0.8),fill,i);
+        if(b.body)check("Hero body",mix(fill,fg,0.9),fill,i);
+        if(b.cta){primary++;check("Hero action",fill,fg,i);}
+      }
+      if(b.kind==="stats"){check("Statistic",p.primary,p.surface,i);check("Statistic label",small,p.surface,i);}
+      if(b.kind==="list"){check("List label",p.text,p.surface,i);if(b.items.some(x=>x.subtitle||x.meta))check("List detail",small,p.surface,i);}
+      if(b.kind==="cards")for(const c of b.items)check("Card label",onColor(p[c.tone],p.text),p[c.tone],i);
+      if(b.kind==="chips"){check("Selected chip",onColor(p.primary,p.background),p.primary,i);check("Other chips",p.text,p.surface,i);}
+      if(b.kind==="button"){if(b.variant==="primary"){primary++;check("Primary action",onColor(p.primary,p.background),p.primary,i);}else check("Secondary action",p.primary,p.background,i);}
+      if(b.kind==="input" && b.placeholder)check("Placeholder",mix(p.text,p.background,0.5),p.background,i);
+      if(b.kind==="tabbar"){check("Active tab",p.primary,p.surface,i);check("Inactive tab",mix(p.text,p.background,0.5),p.surface,i);}
+      if(b.kind==="toggles"||b.kind==="progress")check("Control label",p.text,p.surface,i);
+      if(motor && (["chips","tabbar","toggles"].includes(b.kind)||(b.kind==="hero"&&b.cta)))add("touch_targets","warning","Design heuristic: "+b.kind+" may contain small tap regions.","Measure actual hit areas; aim for 44×44 CSS px for this audience. WCAG 2.2 AA generally requires 24×24 CSS px or an applicable exception.",i,"large_touch_targets");
+      if(audience.needs.includes("large_text")&&["stats","chips","tabbar","input"].includes(b.kind))add("text_size","tip","Design heuristic: compact typography.","Verify text resizing and reflow without lost content.",i,"large_text");
+    });
+    if(plain&&primary>1)add("cognitive_load","warning","Design heuristic: competing primary actions.","Choose one primary action.",null,"plain_language");
   }
   return out;
 }
