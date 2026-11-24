@@ -1,0 +1,11 @@
+# Moodboard to Mockups
+
+> A free browser studio that turns a mood board into a design brief and mobile app mockups.
+
+How it works:
+1. Mood board (https://moodboard-to-mockup-magic.lovable.app/): upload JPG/PNG/WebP images or add 24 original style references; add notes and tags.
+2. Design brief (https://moodboard-to-mockup-magic.lovable.app/brief): an AI writes direction, a 5-6 color palette with roles, a heading/body font pairing, imagery, layout and things to avoid. Uploaded images are sent to the AI only after the designer ticks a consent box; otherwise only notes and tags are used, and the brief says so.
+3. Your app (https://moodboard-to-mockup-magic.lovable.app/app): one-sentence description, core features, audience and accessibility needs.
+4. Mockups (https://moodboard-to-mockup-magic.lovable.app/mockups): 3-4 phone screens styled by the brief, per-screen accessibility recommendations, PNG and Markdown export.
+
+Privacy: no accounts, no saved drafts; work stays in the browser tab and is lost on refresh.
