@@ -82,7 +82,7 @@ jobs:
       - name: Test production preview (no paid AI calls)
         shell: bash
         run: |
-          bun run preview --host 127.0.0.1 --port 4317 > /tmp/moodmockup-preview.log 2>&1 &
+          npx --yes wrangler@4.166.0 dev --config .output/server/wrangler.json --ip 127.0.0.1 --port 4317 --local > /tmp/moodmockup-preview.log 2>&1 &
           pid=$!
           trap 'kill "$pid" 2>/dev/null || true; cat /tmp/moodmockup-preview.log' EXIT
           python tests/browser_smoke.py
