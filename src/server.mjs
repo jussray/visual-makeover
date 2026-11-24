@@ -3,7 +3,7 @@ import { readFile, appendFile, mkdir } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { assertPublicUrl, originOf } from './security.mjs';
+import { requestPublicPage, originOf } from './security.mjs';
 import { callOperaBridge, requiredScopeForOperaTool, OPERA_CAPABILITIES } from './browser/opera-provider.mjs';
 import { callScopedBrowserBridge } from './browser/scoped-bridge.mjs';
 import { verifyCloudflareAccessJwt } from './auth-cloudflare-access.mjs';
@@ -123,33 +123,32 @@ function heuristicMakeover(signals, browserCaptures = []) {
 }
 
 async function scrape(rawUrl) {
-  let url = await assertPublicUrl(rawUrl);
+  let nextUrl = rawUrl;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 12000);
   try {
     for (let redirects = 0; redirects <= 5; redirects += 1) {
-      const res = await fetch(url, { redirect: 'manual', signal: controller.signal, headers: { 'user-agent': 'VisualMakeoverBot/0.1 (+consent-first visual audit)' } });
-      if ([301, 302, 303, 307, 308].includes(res.status)) {
-        if (redirects === 5) throw new Error('Too many redirects.');
-        const location = res.headers.get('location');
-        if (!location) throw new Error('Redirect missing location.');
-        url = await assertPublicUrl(new URL(location, url).toString());
-        continue;
-      }
-      if (!res.ok) throw new Error(`Target returned ${res.status}.`);
-      const type = res.headers.get('content-type') || '';
-      if (!type.includes('text/html')) throw new Error('Only HTML pages are supported in this starter.');
-      const reader = res.body.getReader();
-      let total = 0;
-      const chunks = [];
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        total += value.byteLength;
-        if (total > MAX_SCRAPE_BYTES) throw new Error('Page exceeded scrape size limit.');
-        chunks.push(value);
-      }
-      return htmlToSignals(Buffer.concat(chunks).toString('utf8'), url.toString());
+      const {url,res} = await requestPublicPage(nextUrl,{signal:controller.signal});
+      try {
+        if ([301,302,303,307,308].includes(res.statusCode)) {
+          if (redirects === 5) throw new Error('Too many redirects.');
+          const location = res.headers.location;
+          if (!location) throw new Error('Redirect missing location.');
+          nextUrl = new URL(location,url).toString();
+          continue;
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) throw new Error(`Target returned ${res.statusCode}.`);
+        if (!(res.headers['content-type'] || '').includes('text/html')) throw new Error('Only HTML pages are supported in this starter.');
+        if (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity') throw new Error('Unsupported response encoding.');
+        let total = 0;
+        const chunks = [];
+        for await (const value of res) {
+          total += value.byteLength;
+          if (total > MAX_SCRAPE_BYTES) throw new Error('Page exceeded scrape size limit.');
+          chunks.push(value);
+        }
+        return htmlToSignals(Buffer.concat(chunks).toString('utf8'),url.toString());
+      } finally { res.destroy(); }
     }
     throw new Error('Too many redirects.');
   } finally { clearTimeout(timer); }
