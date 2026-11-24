@@ -50,7 +50,7 @@ function MockupsPage() {
 
   const plans=state.screens.map(s=>s.plan);
   const journeyKey=storyboardKey(brief,base.description,state.audience,plans);
-  const panels=(!derived.anyScreenStale&&panelState?.key===journeyKey)?panelState.entries:{};
+  const panels:Partial<Record<ScreenKind,PanelEntry>>=(!derived.anyScreenStale&&panelState?.key===journeyKey)?panelState.entries:{};
   const canIllustrate=!derived.anyScreenStale&&!state.screensLoading&&!Object.values(state.screenBusy).some(Boolean)&&!exporting;
   async function illustrate(only?:ScreenKind) {
     if(!canIllustrate||drawLock.current||exportLock.current||!plans.length)return;

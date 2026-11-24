@@ -1,3 +1,4 @@
+// @vitest-environment node
 import {describe,it,expect} from "vitest";
 import {BriefSchema,ScreenSchema} from "./schema";
 import {automaticChecks,emptyAudience} from "./review";

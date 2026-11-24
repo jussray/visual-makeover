@@ -84,3 +84,11 @@ npm run test:playwright
 - Node tests cover SSRF guards, origin scoping, Opera capability scopes, and the dual-gate API.
 - Playwright renders the shipped UI and verifies the browser notice defaults to public scrape only; Opera read/navigation are opt-in.
 - Screenshot: `docs/proof/playwright-consent.png`.
+
+## MoodMockup studio — parallel app runtime
+
+The existing Lovable studio source is in `apps/moodmockup/`, pinned to source commit `fd3fac422cd4c886abf1a67823d1676263bd8892`. It is a separate TanStack Start build; the root Node server and its Opera/PromptOS authority boundaries are unchanged. The Visual Makeover launcher links to the existing hosted app, not this branch preview. No Lovable sync or production deployment is established by importing code.
+
+Run `cd apps/moodmockup && bun install --frozen-lockfile && bun run dev`. CI runs the studio tests, TypeScript check, build and 320px/desktop entrance smoke alongside the existing root checks. AI generation still requires the owning provider runtime; the workspace reports exhausted credits.
+
+Studio proof receipts are local drafts. SOL continuity-inspired input invalidation, Chief proof requirements and FCR review state are separate fields. No remote peer invocation, registry registration, or authority transfer is implied. See `docs/MOODMOCKUP-INTEGRATION.md` for source contracts, remaining runtime gates and rollback.

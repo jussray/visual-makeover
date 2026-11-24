@@ -34,8 +34,8 @@ export function StudioShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-30 border-b border-glass-border glass-strong">
         <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <p className="font-display text-2xl leading-none">Moodboard to Mockups</p>
-          <nav aria-label="Steps">
-            <ol className="flex gap-1 overflow-x-auto sm:gap-2">
+          <nav aria-label="Steps" className="min-w-0">
+            <ol className="flex min-w-0 max-w-full gap-1 overflow-x-auto sm:gap-2">
               {STEPS.map((s) => {
                 const current = s.to === path;
                 const enabled = access[s.n];
@@ -86,7 +86,7 @@ export function StepNav({ back, next, nextLabel, nextDisabled, hint }: { back?: 
           ← Back
         </Link>
       ) : <span />}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         {hint && <span className="text-sm text-muted-foreground">{hint}</span>}
         {next &&
           (nextDisabled ? (

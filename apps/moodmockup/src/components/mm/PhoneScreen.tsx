@@ -181,11 +181,11 @@ export const PhoneScreen = forwardRef<HTMLDivElement, { plan: ScreenPlan; brief:
   const t: Theme = { ...p, heading: fontStack(brief.typography.heading), body: fontStack(brief.typography.body), gap: density[0]!, pad: density[1]!, r: { sharp: 4, soft: 14, round: 24 }[plan.radius] };
   const tab = plan.blocks.find((b): b is Extract<ScreenBlock, { kind: "tabbar" }> => b.kind === "tabbar");
   return (
-    <div ref={ref} style={{ width: 300, padding: 10, borderRadius: 46, background: "#1b1a18" }}>
-      <div style={{ width: 280, height: 590, borderRadius: 38, overflow: "hidden", background: t.background, fontFamily: t.body, color: t.text, display: "flex", flexDirection: "column", position: "relative" }}>
+    <div ref={ref} style={{ width: "100%", maxWidth: 300, padding: 10, borderRadius: 46, background: "#1b1a18" }}>
+      <div style={{ width: "100%", height: 590, borderRadius: 38, overflow: "hidden", background: t.background, fontFamily: t.body, color: t.text, display: "flex", flexDirection: "column", position: "relative" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 22px 6px", fontSize: 12, fontWeight: 700, color: t.text }}>
           <span>9:41</span>
-          <span style={{ width: 80, height: 22, borderRadius: 999, background: "#1b1a18", position: "absolute", left: 100, top: 8 }} />
+          <span style={{ width: 80, height: 22, borderRadius: 999, background: "#1b1a18", position: "absolute", left: "50%", transform: "translateX(-50%)", top: 8 }} />
           <span style={{ display: "flex", gap: 4 }}><Signal size={13} aria-hidden /><Wifi size={13} aria-hidden /><BatteryFull size={15} aria-hidden /></span>
         </div>
         <div style={{ flex: 1, overflow: "hidden", padding: `10px ${t.pad + 2}px`, display: "flex", flexDirection: "column", gap: t.gap }}>
