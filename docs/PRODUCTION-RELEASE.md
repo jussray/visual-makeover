@@ -23,3 +23,7 @@ Peer interoperability: no fabricated registry snapshots, signed receipts or toke
 Verify checksums and source SHA, public entrance at 320px and desktop, anonymous privileged requests fail, authorized scoped requests work, no browser secrets leak, brief/storyboard/export flows with provider consent, and no stale result presented as current. Record exact deployment version and separate peer receipts. Roll back to the last independently verified deployment; never remove authorization gates to make a check pass.
 
 No paid hosting, DNS changes, account linking, deployment, peer registration or provider calls are authorized by this document or workflow. Release artifacts expire after seven days.
+
+## AI activation boundary
+
+Billable text and image calls are disabled by default. After the owner confirms a provider budget and the matching Access application, configure `MOODMOCKUP_AI_ENABLED=true`, `CF_ACCESS_TEAM_DOMAIN` (the owning Cloudflare Access team domain), and `CF_ACCESS_AUD` (this studio application's audience) in the server runtime. The application checks RS256 signature, issuer, audience, expiry and subject before reaching the provider; no anonymous fallback or client-supplied identity. Public local board browsing remains available. Validate real authorized and denied production calls without exposing credentials. Per-instance throttling is not a durable spend quota; provider-side limits remain required. Do not enable on the public Lovable project without separate synchronization and configuration approval.

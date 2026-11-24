@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { authorizeAi } from "./ai-access";
 import { BriefSchema, ScreenSchema, ScreensSchema, parseStrict, ICONS, BLOCK_KINDS, type Brief, type ScreenPlan } from "./schema";
 import { FONT_FAMILIES } from "./fonts";
 import { TAGS } from "./types";
@@ -29,13 +30,19 @@ function rateLimited(key: string, max = 15, windowMs = 10 * 60_000) {
   if (hits.size > 5000) hits.clear();
   return false;
 }
-async function callerKey() {
-  try {
-    const { getRequestHeader } = await import("@tanstack/react-start/server");
-    return getRequestHeader("cf-connecting-ip") ?? getRequestHeader("x-forwarded-for")?.split(",")[0] ?? "anon";
-  } catch {
-    return "anon";
-  }
+async function callerIdentity() {
+ try {
+  const { getRequestHeader } = await import("@tanstack/react-start/server");
+  const { env } = await import("node:process");
+  return await authorizeAi({
+    enabled: env["MOODMOCKUP_AI_ENABLED"] === "true",
+    teamDomain: env["CF_ACCESS_TEAM_DOMAIN"],
+    audience: env["CF_ACCESS_AUD"],
+  }, getRequestHeader("cf-access-jwt-assertion"));
+ } catch { return {ok:false,reason:"disabled"} as const; }
+}
+function accessFailure(reason: "disabled" | "unauthorized"): AiFailure {
+ return {ok:false,kind:reason==="disabled"?"unavailable":"rejected",message:reason==="disabled"?"AI generation is not activated for this environment.":"Sign in through the authorized studio before using AI generation."};
 }
 
 function extractText(res: unknown): string {
@@ -58,8 +65,9 @@ function extractText(res: unknown): string {
 type Part = { type: "input_text"; text: string } | { type: "input_image"; image_url: string; detail: "low" };
 
 async function runJson(system: string, parts: Part[], hasImages: boolean): Promise<{ ok: true; text: string } | AiFailure> {
-  const key = await callerKey();
-  if (rateLimited(key)) return { ok: false, kind: "rate_limited", message: "Too many requests in a short time. Please wait a few minutes and try again." };
+  const access = await callerIdentity();
+  if (!access.ok) return accessFailure(access.reason);
+  if (rateLimited(`text:${access.subject}`)) return { ok: false, kind: "rate_limited", message: "Too many requests in a short time. Please wait a few minutes and try again." };
   const sdk = await import("@lovable.dev/ai-gateway");
   try {
     const res = await sdk.generateResponse(
@@ -257,8 +265,9 @@ export const generatePanel = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }): Promise<{ ok: true; image: string } | AiFailure> => {
     if (data.index >= data.total) return { ok: false, kind: "rejected", message: "Invalid storyboard position." };
-    const key = await callerKey();
-    if (rateLimited(`img:${key}`, 12)) return { ok: false, kind: "rate_limited", message: "Too many pictures in a short time. Please wait a few minutes." };
+    const access = await callerIdentity();
+    if (!access.ok) return accessFailure(access.reason);
+    if (rateLimited(`img:${access.subject}`, 12)) return { ok: false, kind: "rate_limited", message: "Too many pictures in a short time. Please wait a few minutes." };
     const b = data.brief;
     const colors = b.palette.map((p) => `${p.name} ${p.hex}`).join(", ");
     const prompt = `Storyboard panel ${data.index + 1} of ${data.total} for a mobile app. App: ${data.description}.
